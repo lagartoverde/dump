@@ -1,5 +1,6 @@
 const mysql = require('mysql')
 const mongoose = require('mongoose')
+const { Pool, Client } = require('pg')
 const cron = require('node-cron');
 const CategoryModel = require('./Models/Category')
 const SubcategoryModel = require('./Models/Subcategory')
@@ -21,11 +22,16 @@ const SessionParticipantModel = require('./Models/SessionParticipant')
 
 require('dotenv').config()
 
-const connection = mysql.createConnection({
-  host     : process.env.MYSQL_HOST,
-  user     : process.env.MYSQL_USER,
-  password : process.env.MYSQL_PASSWORD,
-});
+
+const client = new Client({
+  user: process.env.MYSQL_USER,
+  host: process.env.MYSQL_HOST,
+  password: process.env.MYSQL_PASSWORD,
+  port: 5432,
+  database: 'dump',
+  connectionTimeoutMillis: 50000
+})
+
 
 async function startDump() {
   console.log('starting the dump')
@@ -49,20 +55,21 @@ async function startDump() {
   console.log('DUMP COMPLETED')
 }
 
-function query(queryString) {
+async function query(queryString) {
   return new Promise((res, rej) => {
-    connection.query(queryString, (err, results, fields) => {
+    client.query(queryString, (err, results) => {
       if(err) return rej(err)
-      return res(results)
+      res(results)
     })
   })
 }
 
 async function dumpCategory() {
-  const tableExists = (await query("SHOW TABLES LIKE 'category'"))[0]
+  const tableExists = (await query("SELECT to_regclass('category')"))[0]
+  console.log(tableExists)
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE category (id VARCHAR(30) PRIMARY KEY, title TEXT, status INT)
+      CREATE TABLE category (id VARCHAR PRIMARY KEY, title TEXT, status INT)
     `
     await query(queryString)
   }
@@ -78,10 +85,10 @@ async function dumpCategory() {
 }
 
 async function dumpSubCategory() {
-  const tableExists = (await query("SHOW TABLES LIKE 'subcategory'"))[0]
+  const tableExists = (await query("SELECT to_regclass('subcategory')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE subcategory (id VARCHAR(30) PRIMARY KEY, title TEXT, status INT, category_id VARCHAR(30), FOREIGN KEY (category_id) REFERENCES category(id))
+      CREATE TABLE subcategory (id VARCHAR PRIMARY KEY, title TEXT, status INT, category_id VARCHAR,CONSTRAINT fk_category FOREIGN KEY (category_id) REFERENCES category(id))
     `
     await query(queryString)
   }
@@ -95,57 +102,39 @@ async function dumpSubCategory() {
   console.log('FINISHED subcategories')
 }
 
-async function dumpCourses() {
-  const tableExists = (await query("SHOW TABLES LIKE 'courses'"))[0]
-  if(!tableExists) {
-    const queryString = `
-      CREATE TABLE courses (id VARCHAR(30) PRIMARY KEY, title TEXT, subtitle TEXT, difficulty TEXT, subcategory_id VARCHAR(30), about TEXT, 
-      sessions_count INT, instructor_id VARCHAR(30), available_slots INT, course_start_date DATETIME, course_end_date DATETIME,
-      course_start_time TEXT, course_end_time TEXT, status INT, duration INT, FOREIGN KEY (subcategory_id) REFERENCES subcategory(id), FOREIGN KEY (instructor_id) REFERENCES subcategory(id) )
-    `
-    await query(queryString)
-  }
-  const insertQueryString = `
-    INSERT INTO subcategory (id, title, status, category_id)
-    VALUES
-    ${subcategories.map((subcategory) => `('${subcategory._id}', '${subcategory.title}', ${subcategory.status}, ${subcategory.categoryId})`).join(', ')};
-  `
-  await query(insertQueryString)
-  console.log('FINISHED courses')
-}
 
 async function dumpInstructor() {
-  const photoTableExists = (await query("SHOW TABLES LIKE 'photo'"))[0]
+  const photoTableExists = (await query("SELECT to_regclass('photo')"))[0]
   if(!photoTableExists) {
     const queryString = `
-      CREATE TABLE photo (id VARCHAR(30) PRIMARY KEY, url TEXT, caption TEXT)
+      CREATE TABLE photo (id VARCHAR PRIMARY KEY, url TEXT, caption TEXT)
     `
     await query(queryString)
   }
 
-  const socialLinksTableExists = (await query("SHOW TABLES LIKE 'social_links'"))[0]
+  const socialLinksTableExists = (await query("SELECT to_regclass('social_links')"))[0]
   if(!socialLinksTableExists) {
     const queryString = `
-      CREATE TABLE social_links (id VARCHAR(30) PRIMARY KEY, twitter TEXT, instagram TEXT, facebook TEXT)
+      CREATE TABLE social_links (id VARCHAR PRIMARY KEY, twitter TEXT, instagram TEXT, facebook TEXT)
     `
     await query(queryString)
   }
 
 
-  const tableExists = (await query("SHOW TABLES LIKE 'instructor'"))[0]
+  const tableExists = (await query("SELECT to_regclass('instructor')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE instructor (id VARCHAR(30) PRIMARY KEY, full_name TEXT, about TEXT, designation TEXT,
-      status INT, years_of_experience INT, profile_pic VARCHAR(30), social_links VARCHAR(30), 
-      FOREIGN KEY (profile_pic) REFERENCES photo(id), FOREIGN KEY (social_links) REFERENCES social_links(id))
+      CREATE TABLE instructor (id VARCHAR PRIMARY KEY, full_name TEXT, about TEXT, designation TEXT,
+      status INT, years_of_experience INT, profile_pic VARCHAR, social_links VARCHAR, 
+      CONSTRAINT fk_profile_pic FOREIGN KEY (profile_pic) REFERENCES photo(id), CONSTRAINT fk_social_links FOREIGN KEY (social_links) REFERENCES social_links(id))
     `
     await query(queryString)
   }
 
-  const pastWorkTableExists = (await query("SHOW TABLES LIKE 'past_work'"))[0]
+  const pastWorkTableExists = (await query("SELECT to_regclass('past_work')"))[0]
   if(!pastWorkTableExists) {
     const queryString = `
-      CREATE TABLE past_work (id VARCHAR(30) PRIMARY KEY, url TEXT, instructor_id VARCHAR(30), FOREIGN KEY (instructor_id) REFERENCES instructor(id))
+      CREATE TABLE past_work (id VARCHAR PRIMARY KEY, url TEXT, instructor_id VARCHAR, CONSTRAINT fk_instructor FOREIGN KEY (instructor_id) REFERENCES instructor(id))
     `
     await query(queryString)
   }
@@ -204,10 +193,10 @@ async function dumpSocialLinks(socialLinks) {
 }
 
 async function dumpWhatsappGroup() {
-  const tableExists = (await query("SHOW TABLES LIKE 'whatsapp_group'"))[0]
+  const tableExists = (await query("SELECT to_regclass('whatsapp_group')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE whatsapp_group (id VARCHAR(30) PRIMARY KEY, link TEXT, count_value INT, max_count INT,
+      CREATE TABLE whatsapp_group (id VARCHAR PRIMARY KEY, link TEXT, count_value INT, max_count INT,
       order_value INT, name TEXT, country TEXT, is_ref_group BOOLEAN, is_active BOOLEAN, source TEXT)
     `
     await query(queryString)
@@ -227,11 +216,11 @@ async function dumpWhatsappGroup() {
 }
 
 async function dumpWhatsappGroupParticipant() {
-  const tableExists = (await query("SHOW TABLES LIKE 'whatsapp_group_participant'"))[0]
+  const tableExists = (await query("SELECT to_regclass('whatsapp_group_participant')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE whatsapp_group_participant (id VARCHAR(30) PRIMARY KEY, phone TEXT, is_active BOOLEAN, join_date DATETIME,
-      exit_date DATETIME, group_id VARCHAR(30), FOREIGN KEY (group_id) REFERENCES whatsapp_group(id))
+      CREATE TABLE whatsapp_group_participant (id VARCHAR PRIMARY KEY, phone TEXT, is_active BOOLEAN, join_date TIMESTAMPTZ,
+      exit_date TIMESTAMPTZ, group_id VARCHAR,CONSTRAINT fk_whatsapp_group FOREIGN KEY (group_id) REFERENCES whatsapp_group(id))
     `
     await query(queryString)
   }
@@ -250,10 +239,10 @@ async function dumpWhatsappGroupParticipant() {
 }
 
 async function dumpWaGroupAnalytics() {
-  const tableExists = (await query("SHOW TABLES LIKE 'wa_group_analytics'"))[0]
+  const tableExists = (await query("SELECT to_regclass('wa_group_analytics')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE wa_group_analytics (id VARCHAR(30) PRIMARY KEY, group_id VARCHAR(30), FOREIGN KEY (group_id) REFERENCES whatsapp_group(id))
+      CREATE TABLE wa_group_analytics (id VARCHAR PRIMARY KEY, group_id VARCHAR,CONSTRAINT fk_whatsapp_group FOREIGN KEY (group_id) REFERENCES whatsapp_group(id))
     `
     await query(queryString)
   }
@@ -270,21 +259,21 @@ async function dumpWaGroupAnalytics() {
 }
 
 async function dumpUsers() {
-  const tableExists = (await query("SHOW TABLES LIKE 'users'"))[0]
+  const tableExists = (await query("SELECT to_regclass('users')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE users (id VARCHAR(30) PRIMARY KEY, mobile TEXT, full_name TEXT, gender TEXT, profile_pic VARCHAR(30),
+      CREATE TABLE users (id VARCHAR PRIMARY KEY, mobile TEXT, full_name TEXT, gender TEXT, profile_pic VARCHAR,
       email_verified INT, password TEXT, age INT, role TEXT, status INT, onboarding_status INT, author TEXT,
-      FOREIGN KEY (profile_pic) REFERENCES photo(id))
+      CONSTRAINT fk_profile_pic FOREIGN KEY (profile_pic) REFERENCES photo(id))
     `
     await query(queryString)
   }
 
-  const userPhotosTableExists = (await query("SHOW TABLES LIKE 'user_photos'"))[0]
+  const userPhotosTableExists = (await query("SELECT to_regclass('user_photos')"))[0]
   if(!userPhotosTableExists) {
     const queryString = `
-      CREATE TABLE user_photos (id INT PRIMARY KEY AUTO_INCREMENT, photo_id VARCHAR(30), user_id VARCHAR(30),
-      FOREIGN KEY (photo_id) REFERENCES photo(id), FOREIGN KEY (user_id) REFERENCES users(id))
+      CREATE TABLE user_photos (id SERIAL PRIMARY KEY , photo_id VARCHAR, user_id VARCHAR,
+      CONSTRAINT fk_photo FOREIGN KEY (photo_id) REFERENCES photo(id),CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id))
     `
     await query(queryString)
   }
@@ -314,11 +303,11 @@ async function dumpUsers() {
 }
 
 async function dumpProfiles() {
-  const tableExists = (await query("SHOW TABLES LIKE 'profile'"))[0]
+  const tableExists = (await query("SELECT to_regclass('profile')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE profile (id VARCHAR(30) PRIMARY KEY, full_name TEXT, age INT, gender TEXT, profile_pic VARCHAR(30), parent_id VARCHAR(30),
-      created_by VARCHAR(30))
+      CREATE TABLE profile (id VARCHAR PRIMARY KEY, full_name TEXT, age FLOAT, gender TEXT, profile_pic VARCHAR, parent_id VARCHAR,
+      created_by VARCHAR)
     `
     await query(queryString)
   }
@@ -327,9 +316,11 @@ async function dumpProfiles() {
   const insertQueryString = `
     INSERT INTO profile (id, gender, age, profile_pic, parent_id)
     VALUES
-    ${profiles.map((profile) => `('${profile._id}', '${profile.gender}', ${profile.age}, '${profile.profilePic}', '${profile.parentId}')`).join(', ')};
+    ${profiles.map((profile) => `('${profile._id}', '${profile.gender}', ${Math.floor(profile.age)}, '${profile.profilePic}', '${profile.parentId}')`).join(', ')};
   `
   await query(insertQueryString)
+
+  
   
 
   console.log('FINSHED profiles')
@@ -338,11 +329,11 @@ async function dumpProfiles() {
 
 async function dumpImages() {
 
-  const tableExists = (await query("SHOW TABLES LIKE 'image'"))[0]
+  const tableExists = (await query("SELECT to_regclass('image')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE image (id VARCHAR(30) PRIMARY KEY, url TEXT, entity_type TEXT, status INT, gallery_status INT,
-      created_by VARCHAR(30), author TEXT)
+      CREATE TABLE image (id VARCHAR PRIMARY KEY, url TEXT, entity_type TEXT, status INT, gallery_status INT,
+      created_by VARCHAR, author TEXT)
     `
     await query(queryString)
   }
@@ -360,10 +351,10 @@ async function dumpImages() {
 }
 
 async function dumpConversation() {
-  const tableExists = (await query("SHOW TABLES LIKE 'conversation'"))[0]
+  const tableExists = (await query("SELECT to_regclass('conversation')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE conversation (id VARCHAR(30) PRIMARY KEY, conversation_name TEXT)
+      CREATE TABLE conversation (id VARCHAR PRIMARY KEY, conversation_name TEXT)
     `
     await query(queryString)
   }
@@ -380,11 +371,11 @@ async function dumpConversation() {
 }
 
 async function dumpMessages() {
-  const tableExists = (await query("SHOW TABLES LIKE 'message'"))[0]
+  const tableExists = (await query("SELECT to_regclass('message')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE message (id VARCHAR(30) PRIMARY KEY, msg TEXT, msg_type TEXT, conversation_id VARCHAR(30), status INT,
-      replied_to VARCHAR(30), picked_by VARCHAR(30), FOREIGN KEY (conversation_id) REFERENCES conversation(id))
+      CREATE TABLE message (id VARCHAR PRIMARY KEY, msg TEXT, msg_type TEXT, conversation_id VARCHAR, status INT,
+      replied_to VARCHAR, picked_by VARCHAR,CONSTRAINT fk_conversation FOREIGN KEY (conversation_id) REFERENCES conversation(id))
     `
     await query(queryString)
   }
@@ -403,10 +394,10 @@ async function dumpMessages() {
 }
 
 async function dumpVideos() {
-  const tableExists = (await query("SHOW TABLES LIKE 'video'"))[0]
+  const tableExists = (await query("SELECT to_regclass('video')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE video (id VARCHAR(30) PRIMARY KEY, provider TEXT, video_id TEXT, video_name TEXT, video_desc TEXT,
+      CREATE TABLE video (id VARCHAR PRIMARY KEY, provider TEXT, video_id TEXT, video_name TEXT, video_desc TEXT,
       entity_type TEXT, entity_id TEXT, admin_uploaded BOOLEAN, status INT, author TEXT)
     `
     await query(queryString)
@@ -426,10 +417,10 @@ async function dumpVideos() {
 }
 
 async function dumpBadges() {
-  const tableExists = (await query("SHOW TABLES LIKE 'badge'"))[0]
+  const tableExists = (await query("SELECT to_regclass('badge')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE badge (id VARCHAR(30) PRIMARY KEY, name TEXT, image VARCHAR(30), author TEXT, type TEXT)
+      CREATE TABLE badge (id VARCHAR PRIMARY KEY, name TEXT, image VARCHAR, author TEXT, type TEXT)
     `
     await query(queryString)
   }
@@ -451,30 +442,30 @@ async function dumpBadges() {
 }
 
 async function dumpCourses() {
-  const tableExists = (await query("SHOW TABLES LIKE 'course'"))[0]
+  const tableExists = (await query("SELECT to_regclass('course')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE course (id VARCHAR(30) PRIMARY KEY, title TEXT, subtitle TEXT, age_range VARCHAR(30), difficulty TEXT, 
-      subcategory VARCHAR(30), about TEXT, sessions_count INT, week_days VARCHAR(30), instructor_id VARCHAR(30), available_slots INT,
-      course_start_date DATETIME, course_end_date DATETIME, course_start_time TEXT, course_end_time TEXT, status INT, duration INT,
-      cover_picture VARCHAR(30))
+      CREATE TABLE course (id VARCHAR PRIMARY KEY, title TEXT, subtitle TEXT, age_range VARCHAR, difficulty TEXT, 
+      subcategory VARCHAR, about TEXT, sessions_count INT, week_days VARCHAR, instructor_id VARCHAR, available_slots INT,
+      course_start_date TEXT, course_end_date TEXT, course_start_time TEXT, course_end_time TEXT, status INT, duration INT,
+      cover_picture VARCHAR)
     `
     await query(queryString)
   }
 
-  const ageRangeTableExists = (await query("SHOW TABLES LIKE 'age_range'"))[0]
+  const ageRangeTableExists = (await query("SELECT to_regclass('age_range')"))[0]
   if(!ageRangeTableExists) {
     const queryString = `
-      CREATE TABLE age_range (id INT PRIMARY KEY AUTO_INCREMENT, min INT, max INT, course VARCHAR(30), FOREIGN KEY (course) REFERENCES course(id))
+      CREATE TABLE age_range (id SERIAL PRIMARY KEY , min INT, max INT, course VARCHAR,CONSTRAINT fk_course FOREIGN KEY (course) REFERENCES course(id))
     `
     await query(queryString)
   }
 
-  const weekdaysTableExists = (await query("SHOW TABLES LIKE 'week_days'"))[0]
+  const weekdaysTableExists = (await query("SELECT to_regclass('week_days')"))[0]
   if(!weekdaysTableExists) {
     const queryString = `
-      CREATE TABLE week_days (id INT PRIMARY KEY AUTO_INCREMENT, sunday BOOLEAN, monday BOOLEAN, tuesday BOOLEAN, wednesday BOOLEAN,
-      thursday BOOLEAN, friday BOOLEAN, saturday BOOLEAN, course VARCHAR(30), FOREIGN KEY (course) REFERENCES course(id))
+      CREATE TABLE week_days (id SERIAL PRIMARY KEY , sunday BOOLEAN, monday BOOLEAN, tuesday BOOLEAN, wednesday BOOLEAN,
+      thursday BOOLEAN, friday BOOLEAN, saturday BOOLEAN, course VARCHAR,CONSTRAINT fk_course FOREIGN KEY (course) REFERENCES course(id))
     `
     await query(queryString)
   }
@@ -534,8 +525,8 @@ async function dumpPolls() {
   const tableExists = (await query("SHOW TABLES LIKE 'poll'"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE course (id VARCHAR(30) PRIMARY KEY, question TEXT, answer VARCHAR(30), session_id VARCHAR(30), trigger_time INT, 
-      duration INT, wait_duration INT, show_result_duration INT, question_type TEXT, answer_type TEXT, badge_id VARCHAR(30),
+      CREATE TABLE course (id VARCHAR PRIMARY KEY, question TEXT, answer VARCHAR, session_id VARCHAR, trigger_time INT, 
+      duration INT, wait_duration INT, show_result_duration INT, question_type TEXT, answer_type TEXT, badge_id VARCHAR,
       FOREIGN_KEY (session_id) )
     `
     await query(queryString)
@@ -543,12 +534,12 @@ async function dumpPolls() {
 }
 
 async function dumpSessions() {
-  const tableExists = (await query("SHOW TABLES LIKE 'session'"))[0]
+  const tableExists = (await query("SELECT to_regclass('session')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE session (id VARCHAR(30) PRIMARY KEY, session_num TEXT, coach_password TEXT, topic TEXT, course_id VARCHAR(30), 
-      cover_picture VARCHAR(30), cover_color TEXT, total_slots INT, available_slots INT, status INT, session_type INT, provider TEXT,
-      datetime DATETIME, duration INT, conversation_id VARCHAR(30), meeting_type TEXT, is_trial_session BOOLEAN, video VARCHAR(30),
+      CREATE TABLE session (id VARCHAR PRIMARY KEY, session_num TEXT, coach_password TEXT, topic TEXT, course_id VARCHAR, 
+      cover_picture VARCHAR, cover_color TEXT, total_slots INT, available_slots INT, status INT, session_type INT, provider TEXT,
+      datetime TEXT, duration INT, conversation_id VARCHAR, meeting_type TEXT, is_trial_session BOOLEAN, video VARCHAR,
       description TEXT)
     `
     await query(queryString)
@@ -578,11 +569,11 @@ async function dumpSessions() {
 }
 
 async function dumpSessionFeedback() {
-  const tableExists = (await query("SHOW TABLES LIKE 'session_feedback'"))[0]
+  const tableExists = (await query("SELECT to_regclass('session_feedback')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE session_feedback (id VARCHAR(30) PRIMARY KEY, profile_id VARCHAR(30), session_id VARCHAR(30), 
-      FOREIGN KEY (profile_id) REFERENCES profile(id), FOREIGN KEY (session_id) REFERENCES session(id))
+      CREATE TABLE session_feedback (id VARCHAR PRIMARY KEY, profile_id VARCHAR, session_id VARCHAR, 
+      CONSTRAINT fk_profile FOREIGN KEY (profile_id) REFERENCES profile(id),CONSTRAINT fk_session FOREIGN KEY (session_id) REFERENCES session(id))
     `
     await query(queryString)
   }
@@ -600,35 +591,35 @@ async function dumpSessionFeedback() {
 }
 
 async function dumpSessionParticipant() {
-  const tableExists = (await query("SHOW TABLES LIKE 'session_participant'"))[0]
+  const tableExists = (await query("SELECT to_regclass('session_participant')"))[0]
   if(!tableExists) {
     const queryString = `
-      CREATE TABLE session_participant (id VARCHAR(30) PRIMARY KEY, joined_from TEXT, status INT, type TEXT)
+      CREATE TABLE session_participant (id VARCHAR PRIMARY KEY, joined_from TEXT, status INT, type TEXT)
     `
     await query(queryString)
   }
 
-  const watchTimeTableExists = (await query("SHOW TABLES LIKE 'watch_time'"))[0]
+  const watchTimeTableExists = (await query("SELECT to_regclass('watch_time')"))[0]
   if(!watchTimeTableExists) {
     const queryString = `
-      CREATE TABLE watch_time (id VARCHAR(30) PRIMARY KEY, started_watching INT, stopped_watching INT, minutes_watched INT, participant VARCHAR(30),
-      FOREIGN KEY (participant) REFERENCES session_participant(id))
+      CREATE TABLE watch_time (id VARCHAR PRIMARY KEY, started_watching INT, stopped_watching INT, minutes_watched INT, participant VARCHAR,
+      CONSTRAINT fk_participant FOREIGN KEY (participant) REFERENCES session_participant(id))
     `
     await query(queryString)
   }
 
-  const watchTimeMinutesTable = (await query("SHOW TABLES LIKE 'watch_time_minutes'"))[0]
+  const watchTimeMinutesTable = (await query("SELECT to_regclass('watch_time_minutes')"))[0]
   if(!watchTimeMinutesTable) {
     const queryString = `
-      CREATE TABLE watch_time_minutes (id INT PRIMARY KEY AUTO_INCREMENT, minute INT, watch_time VARCHAR(30), FOREIGN KEY (watch_time) REFERENCES watch_time(id))
+      CREATE TABLE watch_time_minutes (id SERIAL PRIMARY KEY , minute INT, watch_time VARCHAR, CONSTRAINT fk_watch_time FOREIGN KEY (watch_time) REFERENCES watch_time(id))
     `
     await query(queryString)
   }
 
-  const watchTimeRefreshedTableExists = (await query("SHOW TABLES LIKE 'watch_time_refreshed'"))[0]
+  const watchTimeRefreshedTableExists = (await query("SELECT to_regclass('watch_time_refreshed')"))[0]
   if(!watchTimeRefreshedTableExists) {
     const queryString = `
-      CREATE TABLE watch_time_refreshed (id INT PRIMARY KEY AUTO_INCREMENT, refreshed BOOLEAN, watch_time VARCHAR(30), FOREIGN KEY (watch_time) REFERENCES watch_time(id))
+      CREATE TABLE watch_time_refreshed (id SERIAL PRIMARY KEY , refreshed BOOLEAN, watch_time VARCHAR,CONSTRAINT fk_watch_time FOREIGN KEY (watch_time) REFERENCES watch_time(id))
     `
     await query(queryString)
   }
@@ -689,13 +680,20 @@ async function dumpWatchTimeRefreshed(refreshed, watchTime) {
 
 async function clearDatase() {
   console.log('clearing database')
-  await query('DROP DATABASE dump;')
-  await query('CREATE DATABASE dump;')
-  await query('USE dump;')
+  await query('DROP SCHEMA public CASCADE')
+  await query('CREATE SCHEMA public')
+  await query('GRANT ALL ON SCHEMA public TO postgres')
+  await query('GRANT ALL ON SCHEMA public TO public')
+  console.log('database cleared')
 }
 
 async function start() {
-  await connection.connect();
+  console.log('started')
+  try{
+    await client.connect();
+  }catch(e) {
+    console.log(e)
+  }
   await mongoose.connect(process.env.MONGO_DB, {useNewUrlParser: true, useUnifiedTopology: true});
   console.log('connected')
   await clearDatase()
